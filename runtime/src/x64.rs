@@ -19,46 +19,11 @@
 //!
 //! *Note: The presence of some registers listed here is purely what is encodable. Check the relevant architecture documentation to find what is architecturally valid.*
 
-use crate::relocations::{Relocation, RelocationSize, RelocationKind, ImpossibleRelocation};
 use crate::Register;
 
-use std::hash::Hash;
-
-
-/// Relocation implementation for the x64 architecture.
-#[derive(Debug, Clone)]
-pub struct X64Relocation {
-    size: RelocationSize,
-}
-
-impl Relocation for X64Relocation {
-    type Encoding = (u8,);
-    fn from_encoding(encoding: Self::Encoding) -> Self {
-        Self {
-            size: RelocationSize::from_encoding(encoding.0),
-        }
-    }
-    fn from_size(size: RelocationSize) -> Self {
-        Self {
-            size,
-        }
-    }
-    fn size(&self) -> usize {
-        self.size.size()
-    }
-    fn write_value(&self, buf: &mut [u8], value: isize) -> Result<(), ImpossibleRelocation> {
-        self.size.write_value(buf, value)
-    }
-    fn read_value(&self, buf: &[u8]) -> isize {
-        self.size.read_value(buf)
-    }
-    fn kind(&self) -> RelocationKind {
-        RelocationKind::Relative
-    }
-    fn page_size() -> usize {
-        4096
-    }
-}
+/// Relocation implementation for the x86 architecture.
+/// This is just an alias for the x86 relocation type as they support similar features.
+pub type X64Relocation = crate::x86::X86Relocation;
 
 /// An x64 Assembler. This is aliased here for backwards compatability.
 pub type Assembler = crate::Assembler<X64Relocation>;

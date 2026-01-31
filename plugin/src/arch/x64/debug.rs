@@ -81,7 +81,11 @@ fn format_arg(ty: u8, mut size: u8, opsize: u8) -> Cow<'static, str> {
 
     match ty {
         b'i' => format!("imm{}",      format_size(size)).into(),
-        b'o' => format!("rel{}off",   format_size(size)).into(),
+        b'o' => if size == b'q' {
+            format!("abs{}addr",   format_size(size)).into()
+        } else {
+            format!("rel{}off",   format_size(size)).into()
+        },
         b'm' => format!("mem{}",      format_size(size)).into(),
         b'k' => format!("vm32addr{}", format_size(size)).into(),
         b'l' => format!("vm64addr{}", format_size(size)).into(),

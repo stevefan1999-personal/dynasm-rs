@@ -5209,6 +5209,7 @@ Ops!(
     b"v*i*"       , [0xC7              ], 0, AUTO_SIZE;
     b"vbib"       , [0xC6              ], 0;
     b"rqiq"       , [0xB8              ], X, WITH_REXW | SHORT_ARG;
+    b"rqoq"       , [0xB8              ], X, WITH_REXW | SHORT_ARG; // overlaps with the previous, but kept separate for documentation.
     b"cdrd"       , [0x0F, 0x22        ], X; // can only match in 32 bit mode due to "cd"
     b"cqrq"       , [0x0F, 0x22        ], X; // doesn't need a prefix to be encoded, as it's 64 bit natural in 64 bit mode
     b"rdcd"       , [0x0F, 0x20        ], X;
@@ -5223,14 +5224,14 @@ Ops!(
     b"rqdq"       , [0x0F, 0x21        ], X;
 ]
 "movabs"  = [
-    b"Abiq"       , [0xA0              ], X; // special syntax for 64-bit disp only mov
-    b"Awiq"       , [0xA1              ], X, WORD_SIZE;
-    b"Adiq"       , [0xA1              ], X;
-    b"Aqiq"       , [0xA1              ], X, WITH_REXW;
-    b"iqAb"       , [0xA2              ], X;
-    b"iqAw"       , [0xA3              ], X, WORD_SIZE;
-    b"iqAd"       , [0xA3              ], X;
-    b"iqAq"       , [0xA3              ], X, WITH_REXW;
+    b"Aboq"       , [0xA0              ], X; // special syntax for 64-bit disp only mov
+    b"Awoq"       , [0xA1              ], X, WORD_SIZE;
+    b"Adoq"       , [0xA1              ], X;
+    b"Aqoq"       , [0xA1              ], X, WITH_REXW;
+    b"oqAb"       , [0xA2              ], X;
+    b"oqAw"       , [0xA3              ], X, WORD_SIZE;
+    b"oqAd"       , [0xA3              ], X;
+    b"oqAq"       , [0xA3              ], X, WITH_REXW;
 ]
 "jo"     = [
     b"ob"         , [0x70            ], X, EXACT_SIZE;

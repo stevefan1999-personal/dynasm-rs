@@ -530,7 +530,13 @@ pub(super) fn compile_instruction(ctx: &mut Context, instruction: Instruction, a
                         X86Mode::Long => return Err(Some("Extern relocations are not supported in x64 mode".to_string()))
                     }
                 } else {
-                    relocations.push((jump, 0, size, RelocationKind::Relative));
+                    if size == Size::B_8 {
+                        // absolute 8-byte address, needed for x64 large code model
+                        relocations.push((jump, 0, size, RelocationKind::Absolute));
+                    } else {
+                        // jump relocations are relative
+                        relocations.push((jump, 0, size, RelocationKind::Relative));
+                    }
                 }
             },
             _ => panic!("bad immediate data")
@@ -540,13 +546,9 @@ pub(super) fn compile_instruction(ctx: &mut Context, instruction: Instruction, a
     // push relocations
     for (target, offset, size, kind) in relocations {
         let data = [size.in_bytes(), kind.to_id()];
-        let data = match ctx.mode {
-            X86Mode::Protected => &data,
-            X86Mode::Long      => &data[..1],
-        };
 
         // field offset has been tracked, and ref_offset is 0 as x86 offsets are relative to the end of the instruction
-        buffer.push(target.encode(offset + size.in_bytes(), 0, data));
+        buffer.push(target.encode(offset + size.in_bytes(), 0, &data));
     }
 
     Ok(())
@@ -1159,9 +1161,9 @@ fn match_format_string(ctx: &Context, fmt: &Opdata, args: &[CleanArg]) -> Result
         if let Some(size) = size {
             if !match (fsize, code) {
                 // immediates can always fit in larger slots
-                (b'w', b'i') => size <= Size::B_2,
-                (b'd', b'i') => size <= Size::B_4,
-                (b'q', b'i') => size <= Size::B_8,
+                (b'w', b'i' | b'o') => size <= Size::B_2,
+                (b'd', b'i' | b'o') => size <= Size::B_4,
+                (b'q', b'i' | b'o') => size <= Size::B_8,
                 (b'*', b'i') => size <= Size::B_4,
                 // normal size matches
                 (b'b', _)    => size == Size::BYTE,
