@@ -4,7 +4,7 @@ use super::Context;
 use super::ast::{FlatArg, RegKind, RegId, Modifier};
 use super::encoding_helpers;
 
-use crate::common::{Stmt, Size, delimited, bitmask};
+use crate::common::{Stmt, Size, delimited, bitmask, RelocationEncoding};
 use crate::parse_helpers::{as_ident, as_unsigned_number, as_float, as_signed_number};
 
 use syn::spanned::Spanned;
@@ -562,11 +562,7 @@ pub(super) fn compile_instruction(ctx: &mut Context, data: MatchData) -> Result<
                                 { let _dyn_imm: i32 = #value; #check; ((_dyn_imm >> 2) as u32) & #mask }
                             }));
                         }
-                    },
-                    Relocation::LITERAL8
-                    | Relocation::LITERAL16
-                    | Relocation::LITERAL32
-                    | Relocation::LITERAL64 => ()
+                    }
                 },
 
                 _ => panic!("Invalid argument processor")
@@ -609,7 +605,7 @@ pub(super) fn compile_instruction(ctx: &mut Context, data: MatchData) -> Result<
             FlatArg::JumpTarget { ref jump } => match *command {
                 Command::Offset(relocation) => {
                     // encode the complete relocation. Always starts at the begin of the instruction, and also relative to that
-                    let stmt = jump.clone().encode(4, 4, &[relocation.to_id()]);
+                    let stmt = jump.clone().encode(4, 4, true, RelocationEncoding::Custom(relocation.to_id()));
 
                     relocations.push(stmt);
                 },

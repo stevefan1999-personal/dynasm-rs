@@ -16,10 +16,7 @@ pub mod compiler;
 pub mod debug;
 
 use crate::State;
-use crate::arch::{Stmt, Jump, Size};
 use crate::arch::Arch;
-
-use riscvdata::Relocation;
 
 #[cfg(feature = "dynasm_opmap")]
 pub use debug::create_opmap;
@@ -76,10 +73,6 @@ impl Arch for ArchRiscV64I {
         self.features = parse_features(features);
     }
 
-    fn handle_static_reloc(&self, stmts: &mut Vec<Stmt>, reloc: Jump, size: Size) {
-        handle_static_reloc_inner(stmts, reloc, size);
-    }
-
     fn default_align(&self) -> u8 {
         0
     }
@@ -104,10 +97,6 @@ pub struct ArchRiscV64E {
 impl Arch for ArchRiscV64E {
     fn set_features(&mut self, features: &[syn::Ident]) {
         self.features = parse_features(features);
-    }
-
-    fn handle_static_reloc(&self, stmts: &mut Vec<Stmt>, reloc: Jump, size: Size) {
-        handle_static_reloc_inner(stmts, reloc, size);
     }
 
     fn default_align(&self) -> u8 {
@@ -136,10 +125,6 @@ impl Arch for ArchRiscV32I {
         self.features = parse_features(features);
     }
 
-    fn handle_static_reloc(&self, stmts: &mut Vec<Stmt>, reloc: Jump, size: Size) {
-        handle_static_reloc_inner(stmts, reloc, size);
-    }
-
     fn default_align(&self) -> u8 {
         0
     }
@@ -164,10 +149,6 @@ pub struct ArchRiscV32E {
 impl Arch for ArchRiscV32E {
     fn set_features(&mut self, features: &[syn::Ident]) {
         self.features = parse_features(features);
-    }
-
-    fn handle_static_reloc(&self, stmts: &mut Vec<Stmt>, reloc: Jump, size: Size) {
-        handle_static_reloc_inner(stmts, reloc, size);
     }
 
     fn default_align(&self) -> u8 {
@@ -209,24 +190,6 @@ fn compile_instruction_inner(ctx: &mut Context, input: parse::ParseStream) -> pa
 
     Ok(())
 }
-
-fn handle_static_reloc_inner(stmts: &mut Vec<Stmt>, reloc: Jump, size: Size) {
-        let span = reloc.span();
-
-        let relocation = match size {
-            Size::BYTE => Relocation::LITERAL8,
-            Size::B_2 => Relocation::LITERAL16,
-            Size::B_4 => Relocation::LITERAL32,
-            Size::B_8 => Relocation::LITERAL64,
-            _ => {
-                emit_error!(span, "Relocation of unsupported size for the current target architecture");
-                return;
-            }
-        };
-
-        stmts.push(Stmt::Const(0, size));
-        stmts.push(reloc.encode(size.in_bytes(), size.in_bytes(), &[relocation.to_id()]));
-    }
 
 fn parse_features(features: &[syn::Ident]) -> riscvdata::ExtensionFlags {
     // always enable the base extension

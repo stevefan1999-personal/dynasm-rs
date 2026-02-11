@@ -1,6 +1,6 @@
 use proc_macro2::Span;
 
-use crate::common::{Size, Jump};
+use crate::common::{Size, JumpTarget};
 
 
 /// A complete abstraction of an aarch64 register access.
@@ -326,7 +326,7 @@ pub enum RawArg {
     },
     // jump target. Also used by PC-rel loads etc
     JumpTarget {
-        jump: Jump
+        jump: JumpTarget
     },
     // just an arbitrary expression
     Immediate {
@@ -380,7 +380,7 @@ pub enum CleanArg {
         reg: Register
     },
     JumpTarget {
-        jump: Jump
+        jump: JumpTarget
     },
     Immediate {
         prefixed: bool,
@@ -409,7 +409,7 @@ pub enum FlatArg {
         modifier: Modifier,
     },
     JumpTarget {
-        jump: Jump
+        jump: JumpTarget
     },
     Lit {
         ident: syn::Ident

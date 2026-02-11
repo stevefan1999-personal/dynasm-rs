@@ -1,7 +1,6 @@
 use syn::parse;
 use proc_macro_error2::emit_error;
 
-use crate::common::{Size, Stmt, Jump};
 use crate::State;
 
 use std::fmt::Debug;
@@ -14,9 +13,6 @@ pub(crate) trait Arch : Debug + Send {
     /// When the .features directive is used for an architecture, this architecture method will be
     /// called with the list of features as argument
     fn set_features(&mut self, features: &[syn::Ident]);
-    /// When a data directive (.u32, .i64) is used with a jump in it, this needs to be emitted
-    /// in a way that the target runtime understands it. This architecture method handles this.
-    fn handle_static_reloc(&self, stmts: &mut Vec<Stmt>, reloc: Jump, size: Size);
     /// The default byte to pad with for alignment for this architecture.
     fn default_align(&self) -> u8;
     /// The core of the architecture. This function parses a single instruction, storing the to be
@@ -38,11 +34,6 @@ impl Arch for DummyArch {
         if let Some(feature) = features.first() {
             emit_error!(feature, "Cannot set features when the assembling architecture is undefined. Define it using a .arch directive");
         }
-    }
-
-    fn handle_static_reloc(&self, _stmts: &mut Vec<Stmt>, reloc: Jump, _size: Size) {
-        let span = reloc.span();
-        emit_error!(span, "Current assembling architecture is undefined. Define it using a .arch directive");
     }
 
     fn default_align(&self) -> u8 {

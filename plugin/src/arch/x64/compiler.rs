@@ -3,7 +3,7 @@ use proc_macro2::{Span, Literal};
 use quote::{quote_spanned, quote};
 use proc_macro_error2::emit_error;
 
-use crate::common::{Stmt, Size, Jump, JumpKind, delimited};
+use crate::common::{Stmt, Size, JumpTarget, JumpTargetKind, RelocationEncoding, delimited, strip_parenthesis};
 use crate::serialize;
 
 use super::{Context, X86Mode};
@@ -63,27 +63,6 @@ const MOD_NODISP: u8 = 0b00; // normal addressing
 const MOD_NOBASE: u8 = 0b00; // VSIB addressing
 const MOD_DISP8:  u8 = 0b01;
 const MOD_DISP32: u8 = 0b10;
-
-
-#[derive(Debug, Clone, Copy)]
-enum RelocationKind {
-    /// A rip-relative relocation. No need to keep track of.
-    Relative,
-    // An absolute offset to a rip-relative location.
-    Absolute,
-    // A relative offset to an absolute location,
-    Extern,
-}
-
-impl RelocationKind {
-    fn to_id(self) -> u8 {
-        match self {
-            RelocationKind::Relative => 0,
-            RelocationKind::Absolute => 1,
-            RelocationKind::Extern   => 2
-        }
-    }
-}
 
 /*
  * Implementation
@@ -367,8 +346,15 @@ pub(super) fn compile_instruction(ctx: &mut Context, instruction: Instruction, a
                     // x86 doesn't actually allow RIP-relative addressing
                     // but we can work around it with relocations
                     buffer.push(Stmt::u32(0));
-                    let disp = disp.unwrap_or_else(|| serialize::reparse(&serialize::expr_zero()).expect("Invalid expression generated"));
-                    relocations.push((Jump::new(JumpKind::Bare(disp), None), 0, Size::B_4, RelocationKind::Absolute));
+                    let disp = if let Some(disp) = disp {
+                        let mut disp = delimited(disp);
+                        strip_parenthesis(&mut disp);
+                        quote!( { let offset: isize = #disp; offset as usize})
+                    } else {
+                        quote!( { 0usize })
+                    };
+
+                    relocations.push((JumpTarget::new(JumpTargetKind::Relative(delimited(disp)), None), 0, Size::B_4, false));
                 },
             }
 
@@ -444,8 +430,8 @@ pub(super) fn compile_instruction(ctx: &mut Context, instruction: Instruction, a
 
         buffer.push(Stmt::u32(0));
         match ctx.mode {
-            X86Mode::Long      => relocations.push((jump, 0, Size::B_4, RelocationKind::Relative)),
-            X86Mode::Protected => relocations.push((jump, 0, Size::B_4, RelocationKind::Absolute))
+            X86Mode::Long      => relocations.push((jump, 0, Size::B_4, true)),
+            X86Mode::Protected => relocations.push((jump, 0, Size::B_4, false))
         }
     }
 
@@ -524,19 +510,12 @@ pub(super) fn compile_instruction(ctx: &mut Context, instruction: Instruction, a
                 relocations.iter_mut().for_each(|r| r.1 += size.in_bytes());
 
                 // add the new relocation
-                if let JumpKind::Bare(_) = &jump.kind {
-                    match ctx.mode {
-                        X86Mode::Protected => relocations.push((jump, 0, size, RelocationKind::Extern)),
-                        X86Mode::Long => return Err(Some("Extern relocations are not supported in x64 mode".to_string()))
-                    }
+                if size == Size::B_8 {
+                    // absolute 8-byte address, needed for x64 large code model
+                    relocations.push((jump, 0, size, false));
                 } else {
-                    if size == Size::B_8 {
-                        // absolute 8-byte address, needed for x64 large code model
-                        relocations.push((jump, 0, size, RelocationKind::Absolute));
-                    } else {
-                        // jump relocations are relative
-                        relocations.push((jump, 0, size, RelocationKind::Relative));
-                    }
+                    // jump relocations are relative
+                    relocations.push((jump, 0, size, true));
                 }
             },
             _ => panic!("bad immediate data")
@@ -544,11 +523,9 @@ pub(super) fn compile_instruction(ctx: &mut Context, instruction: Instruction, a
     }
 
     // push relocations
-    for (target, offset, size, kind) in relocations {
-        let data = [size.in_bytes(), kind.to_id()];
-
+    for (target, offset, size, relative_encoding) in relocations {
         // field offset has been tracked, and ref_offset is 0 as x86 offsets are relative to the end of the instruction
-        buffer.push(target.encode(offset + size.in_bytes(), 0, &data));
+        buffer.push(target.encode(offset + size.in_bytes(), 0, relative_encoding, RelocationEncoding::Simple(size)));
     }
 
     Ok(())
@@ -559,12 +536,7 @@ fn clean_memoryref(arg: RawArg) -> Result<CleanArg, Option<String>> {
     Ok(match arg {
         RawArg::Direct {reg} => CleanArg::Direct {reg},
         RawArg::JumpTarget {jump, size} => CleanArg::JumpTarget {jump, size},
-        RawArg::IndirectJumpTarget {jump, size} => {
-            if let JumpKind::Bare(_) = jump.kind {
-                return Err(Some("Extern indirect jumps are not supported. Use a displacement".to_string()))
-            }
-            CleanArg::IndirectJumpTarget {jump, size}
-        },
+        RawArg::IndirectJumpTarget {jump, size} => CleanArg::IndirectJumpTarget {jump, size},
         RawArg::Immediate {value, size} => CleanArg::Immediate {value, size},
         RawArg::Invalid => return Err(None),
         RawArg::IndirectRaw {span, value_size, nosplit, disp_size, items} => {

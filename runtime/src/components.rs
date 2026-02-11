@@ -342,8 +342,9 @@ impl<R: Relocation> PatchLoc<R> {
     pub fn value(&self, target: usize, buf_addr: usize) -> isize {
         (match self.relocation.kind() {
             RelocationKind::Relative => target.wrapping_sub(self.location.0 - self.ref_offset as usize),
-            RelocationKind::RelToAbs => target.wrapping_sub(self.location.0 - self.ref_offset as usize + buf_addr),
-            RelocationKind::AbsToRel => target + buf_addr
+            RelocationKind::RelToAbs => target.wrapping_sub(self.location.0 - self.ref_offset as usize).wrapping_sub(buf_addr),
+            RelocationKind::AbsToRel => target.wrapping_add(buf_addr),
+            RelocationKind::Absolute => target
         }) as isize + self.target_offset
     }
 
@@ -360,7 +361,8 @@ impl<R: Relocation> PatchLoc<R> {
     /// `adjustment` is `new_buf_addr - old_buf_addr`.
     pub fn adjust(&self, buffer: &mut [u8], adjustment: isize) -> Result<(), ImpossibleRelocation> {
         let value = match self.relocation.kind() {
-            RelocationKind::Relative => return Ok(()),
+            RelocationKind::Relative
+            | RelocationKind::Absolute => return Ok(()),
             RelocationKind::RelToAbs => self.relocation.read_value(buffer).wrapping_sub(adjustment),
             RelocationKind::AbsToRel => self.relocation.read_value(buffer).wrapping_add(adjustment),
         };
@@ -370,7 +372,8 @@ impl<R: Relocation> PatchLoc<R> {
     /// Returns if this patch requires adjustment when the address of the buffer it resides in is altered.
     pub fn needs_adjustment(&self) -> bool {
         match self.relocation.kind() {
-            RelocationKind::Relative => false,
+            RelocationKind::Relative
+            | RelocationKind::Absolute => false,
             RelocationKind::RelToAbs
             | RelocationKind::AbsToRel => true,
         }
@@ -479,10 +482,12 @@ enum LitPoolEntry {
     U16(u16),
     U32(u32),
     U64(u64),
-    Dynamic(RelocationSize, DynamicLabel),
-    Global(RelocationSize, &'static str),
-    Forward(RelocationSize, &'static str),
-    Backward(RelocationSize, &'static str),
+    Dynamic(RelocationSize, DynamicLabel, bool),
+    Global(RelocationSize, &'static str, bool),
+    Forward(RelocationSize, &'static str, bool),
+    Backward(RelocationSize, &'static str, bool),
+    Absolute(RelocationSize, usize),
+    Relative(RelocationSize, usize),
     Align(u8, usize),
 }
 
@@ -552,31 +557,54 @@ impl LitPool {
         offset
     }
 
-    /// Encode the relative address of a label into the literal pool (relative to the location in the pool)
-    pub fn push_dynamic(&mut self, id: DynamicLabel, size: RelocationSize) -> isize {
+    /// Encode the relative address of a label into the literal pool
+    /// if `relative` is true, the encoded value will be the difference between the target
+    /// and the address of this relocation. Else, it will be the absolute address of the target.
+    pub fn push_dynamic(&mut self, id: DynamicLabel, size: RelocationSize, relative: bool) -> isize {
         let offset = self.bump_offset(size);
-        self.entries.push(LitPoolEntry::Dynamic(size, id));
+        self.entries.push(LitPoolEntry::Dynamic(size, id, relative));
         offset
     }
 
-    /// Encode the relative address of a label into the literal pool (relative to the location in the pool)
-    pub fn push_global(&mut self, name: &'static str, size: RelocationSize) -> isize {
+    /// Encode the relative address of a label into the literal pool
+    /// if `relative` is true, the encoded value will be the difference between the target
+    /// and the address of this relocation. Else, it will be the absolute address of the target.
+    pub fn push_global(&mut self, name: &'static str, size: RelocationSize, relative: bool) -> isize {
         let offset = self.bump_offset(size);
-        self.entries.push(LitPoolEntry::Global(size, name));
+        self.entries.push(LitPoolEntry::Global(size, name, relative));
         offset
     }
 
-    /// Encode the relative address of a label into the literal pool (relative to the location in the pool)
-    pub fn push_forward(&mut self, name: &'static str, size: RelocationSize) -> isize {
+    /// Encode the relative address of a label into the literal pool
+    /// if `relative` is true, the encoded value will be the difference between the target
+    /// and the address of this relocation. Else, it will be the absolute address of the target.
+    pub fn push_forward(&mut self, name: &'static str, size: RelocationSize, relative: bool) -> isize {
         let offset = self.bump_offset(size);
-        self.entries.push(LitPoolEntry::Forward(size, name));
+        self.entries.push(LitPoolEntry::Forward(size, name, relative));
         offset
     }
 
-    /// Encode the relative address of a label into the literal pool (relative to the location in the pool)
-    pub fn push_backward(&mut self, name: &'static str, size: RelocationSize) -> isize {
+    /// Encode the relative address of a label into the literal pool
+    /// if `relative` is true, the encoded value will be the difference between the target
+    /// and the address of this relocation. Else, it will be the absolute address of the target.
+    pub fn push_backward(&mut self, name: &'static str, size: RelocationSize, relative: bool) -> isize {
         let offset = self.bump_offset(size);
-        self.entries.push(LitPoolEntry::Backward(size, name));
+        self.entries.push(LitPoolEntry::Backward(size, name, relative));
+        offset
+    }
+
+    /// Encode a relative offset of an absolute address into the literal pool.
+    pub fn push_absolute_as_relative(&mut self, target: usize, size: RelocationSize) -> isize {
+        let offset = self.bump_offset(size);
+        self.entries.push(LitPoolEntry::Absolute(size, target));
+        offset
+    }
+
+    /// Encode the absolute address of a relative offset into the literal pool.
+    /// Note: `offset` is an usize, to use a negative offset the value can simply be wrapped.
+    pub fn push_relative_as_absolute(&mut self, target: usize, size: RelocationSize) -> isize {
+        let offset = self.bump_offset(size);
+        self.entries.push(LitPoolEntry::Relative(size, target));
         offset
     }
 
@@ -597,21 +625,35 @@ impl LitPool {
                 LitPoolEntry::U16(value) => assembler.push_u16(value),
                 LitPoolEntry::U32(value) => assembler.push_u32(value),
                 LitPoolEntry::U64(value) => assembler.push_u64(value),
-                LitPoolEntry::Dynamic(size, id) => {
+                LitPoolEntry::Dynamic(size, id, relative) => {
                     Self::pad_sized(size, assembler);
-                    assembler.dynamic_relocation(id, 0, size as u8, size as u8, D::Relocation::from_size(size));
+                    let kind = if relative { RelocationKind::Relative } else { RelocationKind::AbsToRel };
+                    assembler.dynamic_relocation(id, 0, size as u8, size as u8, D::Relocation::from_size(kind, size));
                 },
-                LitPoolEntry::Global(size, name) => {
+                LitPoolEntry::Global(size, name, relative) => {
                     Self::pad_sized(size, assembler);
-                    assembler.global_relocation(name, 0, size as u8, size as u8, D::Relocation::from_size(size));
+                    let kind = if relative { RelocationKind::Relative } else { RelocationKind::AbsToRel };
+                    assembler.global_relocation(name, 0, size as u8, size as u8, D::Relocation::from_size(kind, size));
                 },
-                LitPoolEntry::Forward(size, name) => {
+                LitPoolEntry::Forward(size, name, relative) => {
                     Self::pad_sized(size, assembler);
-                    assembler.forward_relocation(name, 0, size as u8, size as u8, D::Relocation::from_size(size));
+                    let kind = if relative { RelocationKind::Relative } else { RelocationKind::AbsToRel };
+                    assembler.forward_relocation(name, 0, size as u8, size as u8, D::Relocation::from_size(kind, size));
                 },
-                LitPoolEntry::Backward(size, name) => {
+                LitPoolEntry::Backward(size, name, relative) => {
                     Self::pad_sized(size, assembler);
-                    assembler.backward_relocation(name, 0, size as u8, size as u8, D::Relocation::from_size(size));
+                    let kind = if relative { RelocationKind::Relative } else { RelocationKind::AbsToRel };
+                    assembler.backward_relocation(name, 0, size as u8, size as u8, D::Relocation::from_size(kind, size));
+                },
+                LitPoolEntry::Absolute(size, target) => {
+                    Self::pad_sized(size, assembler);
+                    let kind = RelocationKind::RelToAbs;
+                    assembler.value_relocation(target, size as u8, size as u8, D::Relocation::from_size(kind, size));
+                },
+                LitPoolEntry::Relative(size, target) => {
+                    Self::pad_sized(size, assembler);
+                    let kind = RelocationKind::AbsToRel;
+                    assembler.value_relocation(target, size as u8, size as u8, D::Relocation::from_size(kind, size));
                 },
                 LitPoolEntry::Align(with, alignment) => assembler.align(alignment, with),
             }
@@ -622,11 +664,11 @@ impl LitPool {
 #[cfg(test)]
 mod tests {
     use crate::*;
-    use relocations::RelocationSize;
+    use relocations::{SimpleRelocation, RelocationSize};
 
     #[test]
-    fn test_litpool_size() {
-        test_litpool::<RelocationSize>();
+    fn test_litpool_simple() {
+        test_litpool::<SimpleRelocation>();
     }
 
     #[test]
@@ -662,15 +704,15 @@ mod tests {
 
         assert_eq!(pool.push_u64(0x3456_789A_BCDE_F012), 16);
 
-        assert_eq!(pool.push_forward("forward1", RelocationSize::Byte), 24);
+        assert_eq!(pool.push_forward("forward1", RelocationSize::Byte, true), 24);
 
         pool.align(4, 0xCC);
 
-        assert_eq!(pool.push_global("global1", RelocationSize::Word), 28);
+        assert_eq!(pool.push_global("global1", RelocationSize::Word, true), 28);
 
-        assert_eq!(pool.push_dynamic(dynamic1, RelocationSize::DWord), 32);
+        assert_eq!(pool.push_dynamic(dynamic1, RelocationSize::DWord, true), 32);
 
-        assert_eq!(pool.push_backward("backward1", RelocationSize::QWord), 40);
+        assert_eq!(pool.push_backward("backward1", RelocationSize::QWord, true), 40);
 
         pool.emit(&mut ops);
 

@@ -5,7 +5,7 @@
 //! * floating point registers, denoted as f0-f31 or by specific names
 //! * vector registers, denoted as v0-v31
 use proc_macro2::Span;
-use crate::common::Jump;
+use crate::common::JumpTarget;
 use super::riscvdata::Opdata;
 
 use std::fmt;
@@ -150,7 +150,7 @@ pub enum RawArg {
     },
     // A label
     JumpTarget {
-        jump: Jump
+        jump: JumpTarget
     },
     // A register
     Register {
@@ -166,7 +166,7 @@ pub enum RawArg {
     // A pc-relative reference
     LabelReference {
         span: Span,
-        jump: Jump,
+        jump: JumpTarget,
         base: Register
     },
     // A register list. These only happen with a single family of instructions in the Zcmp extension
@@ -197,7 +197,7 @@ pub enum FlatArg {
         value: syn::Expr
     },
     JumpTarget {
-        jump: Jump
+        jump: JumpTarget
     },
     Register {
         span: Span,

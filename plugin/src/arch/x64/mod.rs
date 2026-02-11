@@ -9,7 +9,6 @@ mod x64data;
 
 use crate::State;
 use crate::arch::Arch;
-use crate::common::{Size, Stmt, Jump};
 
 #[cfg(feature = "dynasm_opmap")]
 pub use debug::create_opmap;
@@ -50,12 +49,6 @@ impl Arch for Archx64 {
             }
         }
         self.features = new_features;
-    }
-
-    fn handle_static_reloc(&self, stmts: &mut Vec<Stmt>, reloc: Jump, size: Size) {
-        stmts.push(Stmt::Const(0, size));
-        // field_offset of size. Relative to the start of the field so matching ref_offset. Type is size and relative
-        stmts.push(reloc.encode(size.in_bytes(), size.in_bytes(), &[size.in_bytes(), 0]));
     }
 
     fn default_align(&self) -> u8 {
@@ -102,12 +95,6 @@ impl Arch for Archx86 {
             }
         }
         self.features = new_features;
-    }
-
-    fn handle_static_reloc(&self, stmts: &mut Vec<Stmt>, reloc: Jump, size: Size) {
-        stmts.push(Stmt::Const(0, size));
-        // field_offset of size. Relative to the start of the field so matching ref_offset. Type is simply the size.
-        stmts.push(reloc.encode(size.in_bytes(), size.in_bytes(), &[size.in_bytes()]));
     }
 
     fn default_align(&self) -> u8 {

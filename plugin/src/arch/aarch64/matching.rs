@@ -6,7 +6,7 @@ use super::ast::{Instruction, RawArg, CleanArg, FlatArg, RefItem, Register, RegF
 use super::aarch64data::{Opdata, Matcher, COND_MAP, get_mnemonic_data};
 use super::debug::format_opdata_list;
 
-use crate::common::{Size, JumpKind};
+use crate::common::Size;
 use crate::parse_helpers::{as_ident, as_unsigned_number, as_float};
 
 /// Try finding an appropriate instruction definition that matches the given instruction / arguments.
@@ -55,10 +55,6 @@ fn sanitize_args(args: Vec<RawArg>) -> Result<Vec<CleanArg>, Option<String>> {
             },
             // offsets: validate that only relative jumps are allowed (no extern relocations)
             RawArg::JumpTarget { jump } => {
-                if let JumpKind::Bare(_) = jump.kind {
-                    emit_error!(jump.span(), "Extern relocations are not allowed in aarch64");
-                    return Err(None);
-                }
                 res.push(CleanArg::JumpTarget { jump });
             },
             // modifier: LSL LSR ASR ROR and MSL require an immediate.

@@ -4,16 +4,17 @@ use syn::parse;
 use syn::Token;
 use syn::spanned::Spanned;
 use quote::quote_spanned;
-use proc_macro2::{TokenTree, Literal};
+use proc_macro2::{TokenTree, Literal, Span};
 use proc_macro_error2::emit_error;
 
-use crate::common::{Stmt, Size, delimited};
+use crate::common::{Stmt, Size, delimited, RelocationEncoding, JumpTarget};
 use crate::arch;
 use crate::DynasmContext;
 use crate::parse_helpers::ParseOptExt;
 
 pub(crate) fn evaluate_directive(invocation_context: &mut DynasmContext, stmts: &mut Vec<Stmt>, input: parse::ParseStream) -> parse::Result<()> {
     let directive: syn::Ident = input.parse()?;
+    let span = directive.span();
 
     match directive.to_string().as_str() {
         // TODO: oword, qword, float, double, long double
@@ -46,16 +47,24 @@ pub(crate) fn evaluate_directive(invocation_context: &mut DynasmContext, stmts: 
             invocation_context.current_arch.set_features(&features);
         },
         // ; .u8 (expr ("," expr)*)?
-        "u8"  => directive_unsigned(invocation_context, stmts, input, Size::BYTE)?,
-        "u16" => directive_unsigned(invocation_context, stmts, input, Size::B_2)?,
-        "u32" => directive_unsigned(invocation_context, stmts, input, Size::B_4)?,
-        "u64" => directive_unsigned(invocation_context, stmts, input, Size::B_8)?,
-        "i8"  => directive_signed(invocation_context, stmts, input, Size::BYTE)?,
-        "i16" => directive_signed(invocation_context, stmts, input, Size::B_2)?,
-        "i32" => directive_signed(invocation_context, stmts, input, Size::B_4)?,
-        "i64" => directive_signed(invocation_context, stmts, input, Size::B_8)?,
+        "u8"  => directive_unsigned(stmts, input, Size::BYTE)?,
+        "u16" => directive_unsigned(stmts, input, Size::B_2)?,
+        "u32" => directive_unsigned(stmts, input, Size::B_4)?,
+        "u64" => directive_unsigned(stmts, input, Size::B_8)?,
+        "i8"  => directive_signed(stmts, input, Size::BYTE)?,
+        "i16" => directive_signed(stmts, input, Size::B_2)?,
+        "i32" => directive_signed(stmts, input, Size::B_4)?,
+        "i64" => directive_signed(stmts, input, Size::B_8)?,
         "f32" => directive_float(stmts, input, Size::B_4)?,
         "f64" => directive_float(stmts, input, Size::B_8)?,
+        // ; .rel8 label
+        "rel8"  => directive_reference(span, stmts, input, Size::BYTE, true)?,
+        "rel16" => directive_reference(span, stmts, input, Size::B_2, true)?,
+        "rel32" => directive_reference(span, stmts, input, Size::B_4, true)?,
+        "rel64" => directive_reference(span, stmts, input, Size::B_8, true)?,
+        // ; .abs32 label
+        "abs32" => directive_reference(span, stmts, input, Size::B_4, false)?,
+        "abs64" => directive_reference(span, stmts, input, Size::B_8, false)?,
         "bytes" => {
             // ; .bytes expr
             let iterator: syn::Expr = input.parse()?;
@@ -97,10 +106,10 @@ pub(crate) fn evaluate_directive(invocation_context: &mut DynasmContext, stmts: 
         },
         // these are deprecated, but to prevent bad error messages handle them explicitly
         // I'd like to provide a warning instead, but proc-macro-error2 emit_warning! seems to not work.
-        "byte"  => emit_error!(directive.span(), "Directive .byte is deprecated, please use .i8 or .u8 instead."),
-        "word"  => emit_error!(directive.span(), "Directive .word is deprecated, please use .i16 or .u16 instead."),
-        "dword" => emit_error!(directive.span(), "Directive .dword is deprecated, please use .i32 or .u32 instead."),
-        "qword" => emit_error!(directive.span(), "Directive .qword is deprecated, please use .i64 or .u64 instead."),
+        "byte"  => emit_error!(span, "Directive .byte is deprecated, please use .i8 or .u8 instead."),
+        "word"  => emit_error!(span, "Directive .word is deprecated, please use .i16 or .u16 instead."),
+        "dword" => emit_error!(span, "Directive .dword is deprecated, please use .i32 or .u32 instead."),
+        "qword" => emit_error!(span, "Directive .qword is deprecated, please use .i64 or .u64 instead."),
         d => {
             // unknown directive. skip ahead until we hit a ; so the parser can recover
             emit_error!(directive, "unknown directive '{}'", d);
@@ -111,7 +120,7 @@ pub(crate) fn evaluate_directive(invocation_context: &mut DynasmContext, stmts: 
     Ok(())
 }
 
-fn directive_signed(invocation_context: &mut DynasmContext, stmts: &mut Vec<Stmt>, input: parse::ParseStream, size: Size) -> parse::Result<()> {
+fn directive_signed(stmts: &mut Vec<Stmt>, input: parse::ParseStream, size: Size) -> parse::Result<()> {
     // FIXME: this could be replaced by a Punctuated parser?
     // parse (expr (, expr)*)?
 
@@ -119,8 +128,8 @@ fn directive_signed(invocation_context: &mut DynasmContext, stmts: &mut Vec<Stmt
         return Ok(())
     }
 
-    if let Some(jump) = input.parse_opt()? {
-        invocation_context.current_arch.handle_static_reloc(stmts, jump, size);
+    if let Some(jump) = input.parse_opt::<JumpTarget>()? {
+        emit_error!(jump.span(), "Labels in data directives are deprecated, please use the .absX or .relX directives instead.");
     } else {
         let expr: syn::Expr = input.parse()?;
         stmts.push(Stmt::ExprSigned(delimited(expr), size));
@@ -130,8 +139,8 @@ fn directive_signed(invocation_context: &mut DynasmContext, stmts: &mut Vec<Stmt
     while input.peek(Token![,]) {
         let _: Token![,] = input.parse()?;
 
-        if let Some(jump) = input.parse_opt()? {
-            invocation_context.current_arch.handle_static_reloc(stmts, jump, size);
+        if let Some(jump) = input.parse_opt::<JumpTarget>()? {
+            emit_error!(jump.span(), "Labels in data directives are deprecated, please use the .absX or .relX directives instead.");
         } else {
             let expr: syn::Expr = input.parse()?;
             stmts.push(Stmt::ExprSigned(delimited(expr), size));
@@ -141,7 +150,7 @@ fn directive_signed(invocation_context: &mut DynasmContext, stmts: &mut Vec<Stmt
     Ok(())
 }
 
-fn directive_unsigned(invocation_context: &mut DynasmContext, stmts: &mut Vec<Stmt>, input: parse::ParseStream, size: Size) -> parse::Result<()> {
+fn directive_unsigned(stmts: &mut Vec<Stmt>, input: parse::ParseStream, size: Size) -> parse::Result<()> {
     // FIXME: this could be replaced by a Punctuated parser?
     // parse (expr (, expr)*)?
 
@@ -149,8 +158,8 @@ fn directive_unsigned(invocation_context: &mut DynasmContext, stmts: &mut Vec<St
         return Ok(())
     }
 
-    if let Some(jump) = input.parse_opt()? {
-        invocation_context.current_arch.handle_static_reloc(stmts, jump, size);
+    if let Some(jump) = input.parse_opt::<JumpTarget>()? {
+        emit_error!(jump.span(), "Labels in data directives are deprecated, please use the .absX or .relX directives instead.");
     } else {
         let expr: syn::Expr = input.parse()?;
         stmts.push(Stmt::ExprUnsigned(delimited(expr), size));
@@ -160,8 +169,8 @@ fn directive_unsigned(invocation_context: &mut DynasmContext, stmts: &mut Vec<St
     while input.peek(Token![,]) {
         let _: Token![,] = input.parse()?;
 
-        if let Some(jump) = input.parse_opt()? {
-            invocation_context.current_arch.handle_static_reloc(stmts, jump, size);
+        if let Some(jump) = input.parse_opt::<JumpTarget>()? {
+            emit_error!(jump.span(), "Labels in data directives are deprecated, please use the .absX or .relX directives instead.");
         } else {
             let expr: syn::Expr = input.parse()?;
             stmts.push(Stmt::ExprUnsigned(delimited(expr), size));
@@ -197,6 +206,19 @@ fn directive_float(stmts: &mut Vec<Stmt>, input: parse::ParseStream, size: Size)
             _ => unreachable!()
         };
         stmts.push(Stmt::ExprUnsigned(delimited(expr), size));
+    }
+
+    Ok(())
+}
+
+fn directive_reference(span: Span, stmts: &mut Vec<Stmt>, input: parse::ParseStream, size: Size, relative_encoding: bool) -> parse::Result<()> {
+    // parses a single label and encodes a reference to it.
+
+    if let Some(jump) = input.parse_opt::<JumpTarget>()? {
+        stmts.push(Stmt::Const(0, size));
+        stmts.push(jump.encode(size.in_bytes(), size.in_bytes(), relative_encoding, RelocationEncoding::Simple(size)));
+    } else {
+        emit_error!(span, "Expected a label.");
     }
 
     Ok(())

@@ -20,10 +20,10 @@
 //! *Note: The presence of some registers listed here is purely what is encodable. Check the relevant architecture documentation to find what is architecturally valid.*
 
 use crate::Register;
+use crate::relocations::SimpleRelocation;
 
-/// Relocation implementation for the x86 architecture.
-/// This is just an alias for the x86 relocation type as they support similar features.
-pub type X64Relocation = crate::x86::X86Relocation;
+/// The x64 architecure doesn't have special relocation encodings.
+pub type X64Relocation = SimpleRelocation;
 
 /// An x64 Assembler. This is aliased here for backwards compatability.
 pub type Assembler = crate::Assembler<X64Relocation>;

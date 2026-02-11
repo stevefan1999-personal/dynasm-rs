@@ -6,7 +6,6 @@ use super::ast::{ParsedInstruction, RawArg, RegListCount, MatchData, FlatArg, Re
 use super::riscvdata::{Opdata, Matcher, ISAFlags, get_mnemonic_data};
 use super::debug::format_opdata_list;
 
-use crate::common::JumpKind;
 use crate::parse_helpers::{as_ident, as_signed_number};
 
 /// Try finding an appropriate instruction definition that matches the given instruction / arguments.
@@ -76,18 +75,8 @@ fn sanitize_args(args: &mut [RawArg], target: &RiscVTarget) -> Result<(), Option
                     emit_error!(span, "Base register needs to be a regular (integer) register");
                     return Err(None);
                 }
-
-                if let JumpKind::Bare(_) = jump.kind {
-                    emit_error!(jump.span(), "Extern relocations are not allowed in riscv64");
-                    return Err(None);
-                }
             },
-            RawArg::JumpTarget { jump } => {
-                if let JumpKind::Bare(_) = jump.kind {
-                    emit_error!(jump.span(), "Extern relocations are not allowed in riscv64");
-                    return Err(None);
-                }
-            },
+            RawArg::JumpTarget { jump } => (),
             RawArg::RegisterList { first, count, span } => {
                 if first.as_id() != Some(RegId::X1) {
                     emit_error!(span, "The first item in a register list should be 'ra' (x1)");

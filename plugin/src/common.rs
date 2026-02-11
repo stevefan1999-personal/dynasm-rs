@@ -6,7 +6,6 @@ use syn::parse;
 use syn::Token;
 
 use crate::parse_helpers::{ParseOpt, eat_pseudo_keyword};
-use crate::serialize;
 
 /// Enum representing the result size of a value/expression/register/etc in bytes.
 /// just friendly names really
@@ -44,35 +43,42 @@ impl Size {
     }
 }
 
-
-/**
- * Jump types
- */
+/// AST type for parsed dynasm label reference syntax.
+/// Represents a reference to somewhere, either a label or an address, with an optional expression offset.
 #[derive(Debug, Clone)]
-pub struct Jump {
-    pub kind: JumpKind,
+pub struct JumpTarget {
+    pub kind: JumpTargetKind,
     pub offset: Option<syn::Expr>
 }
 
+/// The different types of jump targets
 #[derive(Debug, Clone)]
-pub enum JumpKind {
+pub enum JumpTargetKind {
     // note: these symbol choices try to avoid stuff that is a valid starting symbol for parse_expr
     // in order to allow the full range of expressions to be used. the only currently existing ambiguity is
     // with the symbol <, as this symbol is also the starting symbol for the universal calling syntax <Type as Trait>.method(args)
-    Global(syn::Ident),   // -> label (["+" "-"] offset)?
-    Backward(syn::Ident), //  > label (["+" "-"] offset)?
-    Forward(syn::Ident),  //  < label (["+" "-"] offset)?
-    Dynamic(syn::Expr),   // =>expr | => (expr) (["+" "-"] offset)?
-    Bare(syn::Expr)       // jump to this address
+
+    /// A global label: `->label (+/- offset_expr)`
+    Global(syn::Ident),
+    /// A backwards local label: `<label (+/- offset_expr)`
+    Backward(syn::Ident),
+    /// A forwards local label: `<label (+/- offset_expr)`
+    Forward(syn::Ident),
+    /// A dynamic label: `=>label_expr (+/- offset_expr)`
+    Dynamic(TokenTree),
+    /// A reference to an absolute address: `extern address_expr (+/- offset_expr)`
+    Absolute(TokenTree),
+    /// A relative offset. This doesn't have dedicated syntax but used internally by x86 which needs them for rip-relative addressing
+    Relative(TokenTree),
 }
 
-impl ParseOpt for Jump {
-    fn parse(input: parse::ParseStream) -> parse::Result<Option<Jump>> {
+impl ParseOpt for JumpTarget {
+    fn parse(input: parse::ParseStream) -> parse::Result<Option<JumpTarget>> {
         // extern label
         if eat_pseudo_keyword(input, "extern") {
             let expr: syn::Expr = input.parse()?;
 
-            return Ok(Some(Jump { kind: JumpKind::Bare(expr), offset: None }));
+            return Ok(Some(JumpTarget { kind: JumpTargetKind::Absolute(delimited(expr)), offset: None }));
         }
 
         // -> global_label
@@ -80,21 +86,21 @@ impl ParseOpt for Jump {
             let _: Token![->] = input.parse()?;
             let name: syn::Ident = input.parse()?;
 
-            JumpKind::Global(name)
+            JumpTargetKind::Global(name)
 
         // > forward_label
         } else if input.peek(Token![>]) {
             let _: Token![>] = input.parse()?;
             let name: syn::Ident = input.parse()?;
 
-            JumpKind::Forward(name)
+            JumpTargetKind::Forward(name)
 
         // < backwards_label
         } else if input.peek(Token![<]) {
             let _: Token![<] = input.parse()?;
             let name: syn::Ident = input.parse()?;
 
-            JumpKind::Backward(name)
+            JumpTargetKind::Backward(name)
 
         // => dynamic_label
         } else if input.peek(Token![=>]) {
@@ -110,7 +116,7 @@ impl ParseOpt for Jump {
                 input.parse()?
             };
 
-            JumpKind::Dynamic(expr)
+            JumpTargetKind::Dynamic(delimited(expr))
 
         // nothing
         } else {
@@ -130,22 +136,34 @@ impl ParseOpt for Jump {
             None
         };
 
-        Ok(Some(Jump::new(kind, offset)))
+        Ok(Some(JumpTarget::new(kind, offset)))
     }
 }
 
-impl Jump {
-    pub fn new(kind: JumpKind, offset: Option<syn::Expr>) -> Jump {
-        Jump {
+impl JumpTarget {
+    pub fn new(kind: JumpTargetKind, offset: Option<syn::Expr>) -> JumpTarget {
+        JumpTarget {
             kind,
             offset
         }
     }
 
+    pub fn target_is_absolute(&self) -> bool {
+        match self.kind {
+            JumpTargetKind::Absolute(_) => true,
+            _ => false
+        }
+    }
+
     /// Takes a jump and encodes it as a relocation starting `start_offset` bytes ago, relative to `ref_offset`.
     /// Any data detailing the type of relocation emitted should be contained in `data`, which is emitted as a tuple of u8's.
-    pub fn encode(self, field_offset: u8, ref_offset: u8, data: &[u8]) -> Stmt {
-        let span = self.span();
+    pub fn encode(self, field_offset: u8, ref_offset: u8, relative_encoding: bool, encoding: RelocationEncoding) -> Stmt {
+        let kind = match (relative_encoding, self.target_is_absolute()) {
+            (true, false) => RelocationKind::Relative,
+            (true, true) => RelocationKind::RelToAbs,
+            (false, false) => RelocationKind::AbsToRel,
+            (false, true) => RelocationKind::Absolute,
+        };
 
         let target_offset = if let Some(offset) = self.offset {
             delimited(offset)
@@ -158,25 +176,75 @@ impl Jump {
             target_offset,
             field_offset,
             ref_offset,
-            kind: serialize::expr_tuple_of_u8s(span, data)
+            kind,
+            encoding
         };
         match self.kind {
-            JumpKind::Global(ident) => Stmt::GlobalJumpTarget(ident, relocation),
-            JumpKind::Backward(ident) => Stmt::BackwardJumpTarget(ident, relocation),
-            JumpKind::Forward(ident) => Stmt::ForwardJumpTarget(ident, relocation),
-            JumpKind::Dynamic(expr) => Stmt::DynamicJumpTarget(delimited(expr), relocation),
-            JumpKind::Bare(expr) => Stmt::BareJumpTarget(delimited(expr), relocation),
+            JumpTargetKind::Global(ident) => Stmt::GlobalJumpTarget(ident, relocation),
+            JumpTargetKind::Backward(ident) => Stmt::BackwardJumpTarget(ident, relocation),
+            JumpTargetKind::Forward(ident) => Stmt::ForwardJumpTarget(ident, relocation),
+            JumpTargetKind::Dynamic(expr) => Stmt::DynamicJumpTarget(expr, relocation),
+            JumpTargetKind::Absolute(expr)
+            | JumpTargetKind::Relative(expr) => Stmt::ValueJumpTarget(expr, relocation),
         }
     }
 
     pub fn span(&self) -> Span {
         match &self.kind {
-            JumpKind::Global(ident) => ident.span(),
-            JumpKind::Backward(ident) => ident.span(),
-            JumpKind::Forward(ident) => ident.span(),
-            JumpKind::Dynamic(expr) => expr.span(),
-            JumpKind::Bare(expr) => expr.span(),
+            JumpTargetKind::Global(ident)
+            | JumpTargetKind::Backward(ident)
+            | JumpTargetKind::Forward(ident) => ident.span(),
+            JumpTargetKind::Dynamic(expr)
+            | JumpTargetKind::Absolute(expr)
+            | JumpTargetKind::Relative(expr) => expr.span(),
         }
+    }
+}
+
+
+/// Different relocation behaviours for an encoding-target pair
+/// This specifies how the relocation has to be adapted when the assembling buffer is moved.
+/// Note that there's no absolute kind as an absolute encoding to an absolute target
+/// is just an immediate.
+#[derive(Debug, Clone, Copy)]
+#[repr(u8)]
+pub enum RelocationKind {
+    /// A relative encoding to a relative target
+    Relative = 0,
+    /// An absolute encoding to a relative target
+    AbsToRel = 1,
+    /// A relative encoding to an absolute target
+    RelToAbs = 2,
+    /// An absolute encoding to an absolute target (idk why)
+    Absolute = 3,
+}
+
+
+/// Specifies the way that a relocation is encoded.
+#[derive(Debug, Clone, Copy)]
+pub enum RelocationEncoding {
+    /// Just as a value of a certain size, encoded little-endian
+    Simple(Size),
+    /// An encoding custom to a certain instruction set. value 0-59 are available here.
+    Custom(u8)
+}
+
+impl RelocationEncoding {
+    /// pack the type of relocation that this is, based on the `kind` and `encoding` fields, in a
+    /// single byte. This should match with the decoding logic in `dynasmrt`.
+    pub fn encode(&self, kind: RelocationKind) -> u8 {
+        (match self {
+            RelocationEncoding::Simple(size) => match size {
+                Size::BYTE => 0,
+                Size::B_2 => 1,
+                Size::B_4 => 2,
+                Size::B_8 => 3,
+                _ => panic!("Unencodable size given for simple relocation")
+            },
+            RelocationEncoding::Custom(code) => {
+                (code + 4) & 0x3F
+            }
+        }) | ((kind as u8) << 6)
     }
 }
 
@@ -187,9 +255,9 @@ pub struct Relocation {
     pub target_offset: TokenTree,
     pub field_offset: u8,
     pub ref_offset: u8,
-    pub kind: TokenTree,
+    pub kind: RelocationKind,
+    pub encoding: RelocationEncoding
 }
-
 
 /// An abstract representation of a dynasm runtime statement to be emitted
 #[derive(Debug, Clone)]
@@ -218,7 +286,7 @@ pub enum Stmt {
     ForwardJumpTarget(syn::Ident, Relocation),
     BackwardJumpTarget(syn::Ident, Relocation),
     DynamicJumpTarget(TokenTree, Relocation),
-    BareJumpTarget(TokenTree, Relocation),
+    ValueJumpTarget(TokenTree, Relocation),
 
     // a random statement that has to be inserted between assembly hunks
     Stmt(TokenStream)

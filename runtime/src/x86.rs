@@ -20,46 +20,11 @@
 
 
 use crate::Register;
-use crate::relocations::{Relocation, RelocationSize, RelocationKind, ImpossibleRelocation};
+use crate::relocations::SimpleRelocation;
 
 
-/// Relocation implementation for the x86 architecture.
-#[derive(Debug, Clone)]
-pub struct X86Relocation {
-    size: RelocationSize,
-    kind: RelocationKind,
-}
-
-impl Relocation for X86Relocation {
-    type Encoding = (u8, u8);
-    fn from_encoding(encoding: Self::Encoding) -> Self {
-        Self {
-            size: RelocationSize::from_encoding(encoding.0),
-            kind: RelocationKind::from_encoding(encoding.1),
-        }
-    }
-    fn from_size(size: RelocationSize) -> Self {
-        Self {
-            size,
-            kind: RelocationKind::Relative,
-        }
-    }
-    fn size(&self) -> usize {
-        self.size.size()
-    }
-    fn write_value(&self, buf: &mut [u8], value: isize) -> Result<(), ImpossibleRelocation> {
-        self.size.write_value(buf, value)
-    }
-    fn read_value(&self, buf: &[u8]) -> isize {
-        self.size.read_value(buf)
-    }
-    fn kind(&self) -> RelocationKind {
-        self.kind
-    }
-    fn page_size() -> usize {
-        4096
-    }
-}
+/// The x86 architecure doesn't have special relocation encodings.
+pub type X86Relocation = SimpleRelocation;
 
 
 /// An x86 Assembler. This is aliased here for backwards compatability.

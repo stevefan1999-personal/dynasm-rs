@@ -23,14 +23,12 @@
 //! in correctly using these instructions. They will return `Some(encoding)` only if the given value can be encoded losslessly in that immediate type.
 
 use crate::Register;
-use crate::relocations::{Relocation, RelocationSize, RelocationKind, ImpossibleRelocation, fits_signed_bitfield};
+use crate::relocations::{ArchitectureRelocationEncoding, Relocation, RelocationType, RelocationSize, RelocationKind, RelocationEncoding, ImpossibleRelocation, fits_signed_bitfield};
 use byteorder::{ByteOrder, LittleEndian};
 use std::convert::TryFrom;
 
-/// Relocation implementation for the aarch64 architecture.
-#[derive(Debug, Clone)]
-#[allow(missing_docs)]
-pub enum Aarch64Relocation {
+#[derive(Debug, Clone, Copy)]
+enum Aarch64RelocationEncoding {
     // b, bl 26 bits, dword aligned
     B,
     // b.cond, cbnz, cbz, ldr, ldrsw, prfm: 19 bits, dword aligned
@@ -41,19 +39,29 @@ pub enum Aarch64Relocation {
     ADRP,
     // tbnz, tbz: 14 bits, dword aligned
     TBZ,
-    // Anything in directives
-    Plain(RelocationSize),
 }
 
-impl Aarch64Relocation {
+impl ArchitectureRelocationEncoding for Aarch64RelocationEncoding {
+    fn decode(code: u8) -> Self {
+        match code {
+            0 => Self::B,
+            1 => Self::BCOND,
+            2 => Self::ADR,
+            3 => Self::ADRP,
+            4 => Self::TBZ,
+            n => panic!("Invalid complex relocation code {n} given for the current architecture")
+        }
+    }
+}
+
+impl Aarch64RelocationEncoding {
     fn op_mask(&self) -> u32 {
         match self {
             Self::B => 0xFC00_0000,
             Self::BCOND => 0xFF00_001F,
             Self::ADR => 0x9F00_001F,
             Self::ADRP => 0x9F00_001F,
-            Self::TBZ => 0xFFF8_001F,
-            Self::Plain(_) => 0
+            Self::TBZ => 0xFFF8_001F
         }
     }
 
@@ -97,90 +105,83 @@ impl Aarch64Relocation {
                 }
                 let value = (value >> 2) as u32;
                 (value & 0x3FFF) << 5
-            },
-            Self::Plain(_) => return Err(ImpossibleRelocation { } )
+            }
         })
     }
 }
 
+/// Relocation implementation for the aarch64 architecture.
+#[derive(Debug, Clone, Copy)]
+pub struct Aarch64Relocation(RelocationType<Aarch64RelocationEncoding>);
+
 impl Relocation for Aarch64Relocation {
-    type Encoding = (u8,);
-    fn from_encoding(encoding: Self::Encoding) -> Self {
-        match encoding.0 {
-            0 => Self::B,
-            1 => Self::BCOND,
-            2 => Self::ADR,
-            3 => Self::ADRP,
-            4 => Self::TBZ,
-            x  => Self::Plain(RelocationSize::from_encoding(x - 4))
-        }
+    fn from_encoding(encoding: u8) -> Self {
+        Aarch64Relocation(RelocationType::decode(encoding))
     }
-    fn from_size(size: RelocationSize) -> Self {
-        Self::Plain(size)
+    fn from_size(kind: RelocationKind, size: RelocationSize) -> Self {
+        Aarch64Relocation(RelocationType::from_size(kind, size))
     }
     fn size(&self) -> usize {
-        match self {
-            Self::Plain(s) => s.size(),
-            _ => RelocationSize::DWord.size(),
+        match self.0.encoding {
+            RelocationEncoding::Simple(s) => s.size(),
+            RelocationEncoding::ArchSpecific(_) => 4
         }
     }
     fn write_value(&self, buf: &mut [u8], value: isize) -> Result<(), ImpossibleRelocation> {
-        if let Self::Plain(s) = self {
-            return s.write_value(buf, value);
-        };
-
-        let mask = self.op_mask();
-        let template = LittleEndian::read_u32(buf) & mask;
-
-        let packed = self.encode(value)?;
-
-        LittleEndian::write_u32(buf, template | packed);
-        Ok(())
+        match self.0.encoding {
+            RelocationEncoding::Simple(s) => s.write_value(buf, value),
+            RelocationEncoding::ArchSpecific(c) => {
+                let mask = c.op_mask();
+                let template = LittleEndian::read_u32(buf) & mask;
+                let packed = c.encode(value)?;
+                LittleEndian::write_u32(buf, template | packed);
+                Ok(())
+            }
+        }
     }
     fn read_value(&self, buf: &[u8]) -> isize {
-        if let Self::Plain(s) = self {
-            return s.read_value(buf);
-        };
+        match self.0.encoding {
+            RelocationEncoding::Simple(s) => s.read_value(buf),
+            RelocationEncoding::ArchSpecific(c) => {
+                let mask = !c.op_mask();
+                let value = LittleEndian::read_u32(buf);
+                let unpacked = match c {
+                    Aarch64RelocationEncoding::B => u64::from(
+                        value & mask
+                    ) << 2,
+                    Aarch64RelocationEncoding::BCOND => u64::from(
+                        (value & mask) >> 5
+                    ) << 2,
+                    Aarch64RelocationEncoding::ADR  => u64::from(
+                        (((value >> 5 ) & 0x7FFFF) << 2) |
+                        ((value >> 29) & 3 )
+                    ),
+                    Aarch64RelocationEncoding::ADRP => u64::from(
+                        (((value >> 5 ) & 0x7FFFF) << 2) |
+                        ((value >> 29) & 3 )
+                    ) << 12,
+                    Aarch64RelocationEncoding::TBZ => u64::from(
+                        (value & mask) >> 5
+                    ) << 2
+                };
 
-        let mask = !self.op_mask();
-        let value = LittleEndian::read_u32(buf);
-        let unpacked = match self {
-            Self::B => u64::from(
-                value & mask
-            ) << 2,
-            Self::BCOND => u64::from(
-                (value & mask) >> 5
-            ) << 2,
-            Self::ADR  => u64::from(
-                (((value >> 5 ) & 0x7FFFF) << 2) |
-                ((value >> 29) & 3 )
-            ),
-            Self::ADRP => u64::from(
-                (((value >> 5 ) & 0x7FFFF) << 2) |
-                ((value >> 29) & 3 )
-            ) << 12,
-            Self::TBZ => u64::from(
-                (value & mask) >> 5
-            ) << 2,
-            Self::Plain(_) => unreachable!()
-        };
+                // Sign extend.
+                let bits = match c {
+                    Aarch64RelocationEncoding::B => 26,
+                    Aarch64RelocationEncoding::BCOND => 19,
+                    Aarch64RelocationEncoding::ADR => 21,
+                    Aarch64RelocationEncoding::ADRP => 33,
+                    Aarch64RelocationEncoding::TBZ => 14
+                };
+                let offset = 1u64 << (bits - 1);
+                let value: u64 = (unpacked ^ offset).wrapping_sub(offset);
 
-        // Sign extend.
-        let bits = match self {
-            Self::B => 26,
-            Self::BCOND => 19,
-            Self::ADR => 21,
-            Self::ADRP => 33,
-            Self::TBZ => 14,
-            Self::Plain(_) => unreachable!()
-        };
-        let offset = 1u64 << (bits - 1);
-        let value: u64 = (unpacked ^ offset).wrapping_sub(offset);
-
-        value as i64 as isize
+                value as i64 as isize
+            }
+        }
     }
     fn kind(&self) -> RelocationKind {
-        RelocationKind::Relative
+        self.0.kind
     }
     fn page_size() -> usize {
         4096

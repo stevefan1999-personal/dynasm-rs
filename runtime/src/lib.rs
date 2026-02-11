@@ -130,8 +130,8 @@ pub enum TargetKind {
     Global(&'static str),
     /// This targets the specified dynamic label.
     Dynamic(DynamicLabel),
-    /// This targets the specified address.
-    Extern(usize),
+    /// This targets the specified value.
+    Value(usize),
     /// An already resolved relocation that needs to be adjusted when the buffer moves in memory.
     Managed,
 }
@@ -142,7 +142,7 @@ impl fmt::Display for TargetKind {
             Self::Local(s) => write!(f, "target [><]{}", s),
             Self::Global(s) => write!(f, "target ->{}", s),
             Self::Dynamic(id) => write!(f, "target =>{}", id.get_id()),
-            Self::Extern(value) => write!(f, "target extern {}", value),
+            Self::Value(value) => write!(f, "target extern {}", value),
             Self::Managed => write!(f, "while adjusting managed relocation"),
         }
     }
@@ -253,24 +253,24 @@ pub trait DynasmLabelApi : DynasmApi {
     fn dynamic_label(&mut self, id: DynamicLabel);
 
     /// Record a relocation spot for a forward reference to a local label
-    fn forward_reloc( &mut self, name: &'static str, target_offset: isize, field_offset: u8, ref_offset: u8, kind: <Self::Relocation as Relocation>::Encoding) {
+    fn forward_reloc( &mut self, name: &'static str, target_offset: isize, field_offset: u8, ref_offset: u8, kind: u8) {
         self.forward_relocation(name, target_offset, field_offset, ref_offset, Self::Relocation::from_encoding(kind))
     }
     /// Record a relocation spot for a backward reference to a local label
-    fn backward_reloc(&mut self, name: &'static str, target_offset: isize, field_offset: u8, ref_offset: u8, kind: <Self::Relocation as Relocation>::Encoding) {
+    fn backward_reloc(&mut self, name: &'static str, target_offset: isize, field_offset: u8, ref_offset: u8, kind: u8) {
         self.backward_relocation(name, target_offset, field_offset, ref_offset, Self::Relocation::from_encoding(kind))
     }
     /// Record a relocation spot for a reference to a global label
-    fn global_reloc(  &mut self, name: &'static str, target_offset: isize, field_offset: u8, ref_offset: u8, kind: <Self::Relocation as Relocation>::Encoding) {
+    fn global_reloc(  &mut self, name: &'static str, target_offset: isize, field_offset: u8, ref_offset: u8, kind: u8) {
         self.global_relocation(name, target_offset, field_offset, ref_offset, Self::Relocation::from_encoding(kind))
     }
     /// Record a relocation spot for a reference to a dynamic label
-    fn dynamic_reloc( &mut self, id: DynamicLabel,   target_offset: isize, field_offset: u8, ref_offset: u8, kind: <Self::Relocation as Relocation>::Encoding) {
+    fn dynamic_reloc( &mut self, id: DynamicLabel,   target_offset: isize, field_offset: u8, ref_offset: u8, kind: u8) {
         self.dynamic_relocation(id, target_offset, field_offset, ref_offset, Self::Relocation::from_encoding(kind))
     }
     /// Record a relocation spot to an arbitrary target.
-    fn bare_reloc(&mut self, target: usize, field_offset: u8, ref_offset: u8, kind: <Self::Relocation as Relocation>::Encoding) {
-        self.bare_relocation(target, field_offset, ref_offset, Self::Relocation::from_encoding(kind))
+    fn value_reloc(   &mut self, value: usize, field_offset: u8, ref_offset: u8, kind: u8) {
+        self.value_relocation(value, field_offset, ref_offset, Self::Relocation::from_encoding(kind))
     }
 
     /// Equivalent of forward_reloc, but takes a non-encoded relocation
@@ -281,8 +281,8 @@ pub trait DynasmLabelApi : DynasmApi {
     fn global_relocation(  &mut self, name: &'static str, target_offset: isize, field_offset: u8, ref_offset: u8, kind: Self::Relocation);
     /// Equivalent of dynamic_reloc, but takes a non-encoded relocation
     fn dynamic_relocation( &mut self, id: DynamicLabel,   target_offset: isize, field_offset: u8, ref_offset: u8, kind: Self::Relocation);
-    /// Equivalent of bare_reloc, but takes a non-encoded relocation
-    fn bare_relocation(&mut self, target: usize, field_offset: u8, ref_offset: u8, kind: Self::Relocation);
+    /// Equivalent of absolute_reloc, but takes a non-encoded relocation
+    fn value_relocation(   &mut self, value: usize, field_offset: u8, ref_offset: u8, kind: Self::Relocation);
 }
 
 
@@ -546,12 +546,12 @@ impl<R: Relocation> DynasmLabelApi for VecAssembler<R> {
         };
         self.relocs.add_static(label, PatchLoc::new(location, target_offset, field_offset, ref_offset, kind));
     }
-    fn bare_relocation(&mut self, target: usize, field_offset: u8, ref_offset: u8, kind: R) {
+    fn value_relocation(&mut self, value: usize, field_offset: u8, ref_offset: u8, kind: R) {
         let location = self.offset();
         let loc = PatchLoc::new(location, 0, field_offset, ref_offset, kind);
         let buf = &mut self.ops[loc.range(0)];
-        if loc.patch(buf, self.baseaddr, target).is_err() {
-            self.error = Some(DynasmError::ImpossibleRelocation(TargetKind::Extern(target)))
+        if loc.patch(buf, self.baseaddr, value).is_err() {
+            self.error = Some(DynasmError::ImpossibleRelocation(TargetKind::Value(value)))
         }
     }
 }
@@ -841,12 +841,12 @@ impl<R: Relocation> DynasmLabelApi for Assembler<R> {
         };
         self.relocs.add_static(label, PatchLoc::new(location, target_offset, field_offset, ref_offset, kind));
     }
-    fn bare_relocation(&mut self, target: usize, field_offset: u8, ref_offset: u8, kind: R) {
+    fn value_relocation(&mut self, value: usize, field_offset: u8, ref_offset: u8, kind: R) {
         let location = self.offset();
         let loc = PatchLoc::new(location, 0, field_offset, ref_offset, kind);
         let buf = &mut self.ops[loc.range(self.memory.committed())];
-        if loc.patch(buf, self.memory.execbuffer_addr(), target).is_err() {
-            self.error = Some(DynasmError::ImpossibleRelocation(TargetKind::Extern(target)))
+        if loc.patch(buf, self.memory.execbuffer_addr(), value).is_err() {
+            self.error = Some(DynasmError::ImpossibleRelocation(TargetKind::Value(value)))
         } else if loc.needs_adjustment() {
             self.managed.add(loc)
         }
@@ -1047,13 +1047,13 @@ impl<'a, R: Relocation> DynasmLabelApi for Modifier<'a, R> {
         };
         self.relocs.add_static(label, PatchLoc::new(location, target_offset, field_offset, ref_offset, kind));
     }
-    fn bare_relocation(&mut self, target: usize, field_offset: u8, ref_offset: u8, kind: R) {
+    fn value_relocation(&mut self, value: usize, field_offset: u8, ref_offset: u8, kind: R) {
         let location = self.offset();
         let loc = PatchLoc::new(location, 0, field_offset, ref_offset, kind);
             let buf_addr = self.buffer.as_ptr() as usize;
         let buf = &mut self.buffer[loc.range(0)];
-        if loc.patch(buf, buf_addr, target).is_err() {
-            self.error = Some(DynasmError::ImpossibleRelocation(TargetKind::Extern(target)));
+        if loc.patch(buf, buf_addr, value).is_err() {
+            self.error = Some(DynasmError::ImpossibleRelocation(TargetKind::Value(value)));
         } else if loc.needs_adjustment() {
             self.new_managed.add(loc)
         }

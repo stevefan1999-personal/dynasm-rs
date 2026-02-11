@@ -1,6 +1,7 @@
 //! This module defines the `Relocation` trait and several utilities for implementing relocations.
 
 use byteorder::{ByteOrder, LittleEndian};
+use std::fmt::Debug;
 
 use std::convert::TryFrom;
 
@@ -13,12 +14,10 @@ pub struct ImpossibleRelocation { }
 /// When implementing a new architecture, one simply has to implement this trait for
 /// the architecture's relocation definition.
 pub trait Relocation {
-    /// The encoded representation for this relocation that is emitted by the dynasm! macro.
-    type Encoding;
     /// construct this relocation from an encoded representation.
-    fn from_encoding(encoding: Self::Encoding) -> Self;
+    fn from_encoding(encoding: u8) -> Self;
     /// construct this relocation from a simple size. This is used to implement relocations in directives and literal pools.
-    fn from_size(size: RelocationSize) -> Self;
+    fn from_size(kind: RelocationKind, size: RelocationSize) -> Self;
     /// The size of the slice of bytes affected by this relocation
     fn size(&self) -> usize;
     /// Write a value into a buffer of size `self.size()` in the format of this relocation.
@@ -32,39 +31,87 @@ pub trait Relocation {
     fn page_size() -> usize;
 }
 
+/// Trait that just handles the internal decoding of architecture-specific relocation encodings
+/// This is useful so the relocation type machinery can be generic over it.
+pub trait ArchitectureRelocationEncoding : Clone + Copy + Debug {
+    /// decodes this custom relocation encoding from the bitfield in the relocation code
+    fn decode(code: u8) -> Self;
+}
 
-/// Specifies what kind of relocation a relocation is.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+
+/// Enum that specifies if/how relocations should be adapted if the assembling buffer is moved
+#[derive(Clone, Copy, Debug)]
 pub enum RelocationKind {
     /// A simple, PC-relative relocation. These can be encoded once and do not need
     /// to be adjusted when the executable buffer is moved.
-    Relative = 0,
+    Relative,
     /// An absolute relocation to a relative address,
     /// i.e. trying to put the address of a dynasm x86 function in a register
     /// This means adjustment is necessary when the executable buffer is moved
-    AbsToRel = 1,
+    AbsToRel,
     /// A relative relocation to an absolute address,
     /// i.e. trying to call a Rust function with a dynasm x86 call.
     /// This means adjustment is necessary when the executable buffer is moved
-    RelToAbs = 2,
+    RelToAbs,
+    /// An absolute relocation to an absolute address
+    /// This isn't particularly useful, but the user can specify it sometimes
+    Absolute
 }
 
-impl RelocationKind {
-    /// Converts back from numeric value to RelocationKind
-    pub fn from_encoding(encoding: u8) -> Self {
-        match encoding {
-            0 => Self::Relative,
-            1 => Self::AbsToRel,
-            2 => Self::RelToAbs,
-            x => panic!("Unsupported relocation kind {}", x)
+/// Enum that specifies how a certain relocation is encoded.
+#[derive(Clone, Copy, Debug)]
+pub enum RelocationEncoding<A: ArchitectureRelocationEncoding> {
+    /// This relocation is just some bytes of data
+    Simple(RelocationSize),
+    /// This relocation is complex and requires architecture-specific decoding logic
+    ArchSpecific(A)
+}
+
+/// `RelocationType` contains all information needed to describe how a relocation should be
+/// performed by the runtime
+#[derive(Clone, Copy, Debug)]
+pub struct RelocationType<A: ArchitectureRelocationEncoding> {
+    /// How this relocation should be adapted if the buffer gets moved
+    pub kind: RelocationKind,
+    /// The way this relocation is to be encoded
+    pub encoding: RelocationEncoding<A>
+}
+
+impl<A: ArchitectureRelocationEncoding> RelocationType<A> {
+    /// decode the packed representation emitted by the plugin
+    pub fn decode(code: u8) -> Self {
+        let kind = match code >> 6 {
+            0 => RelocationKind::Relative,
+            1 => RelocationKind::AbsToRel,
+            2 => RelocationKind::RelToAbs,
+            3 => RelocationKind::Absolute,
+            _ => unreachable!()
+        };
+
+        let encoding = match code & 0x3F {
+            0 => RelocationEncoding::Simple(RelocationSize::Byte),
+            1 => RelocationEncoding::Simple(RelocationSize::Word),
+            2 => RelocationEncoding::Simple(RelocationSize::DWord),
+            3 => RelocationEncoding::Simple(RelocationSize::QWord),
+            c => RelocationEncoding::ArchSpecific(A::decode(c - 4))
+        };
+        RelocationType {
+            kind,
+            encoding
+        }
+    }
+
+    /// manually create a `RelocationType` for a simple size-based relocation
+    pub fn from_size(kind: RelocationKind, size: RelocationSize) -> Self {
+        RelocationType {
+            kind,
+            encoding: RelocationEncoding::Simple(size)
         }
     }
 }
 
-
-/// A descriptor for the size of a relocation. This also doubles as a relocation itself
-/// for relocations in data directives. Can be converted to relocations of any kind of architecture
-/// using `Relocation::from_size`.
+/// A simple size-based relocation descriptor for relocations in data directives.
+/// Can be converted to a relocation for any kind of architecture using `Relocation::from_size`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum RelocationSize {
     /// A byte-sized relocation
@@ -77,24 +124,14 @@ pub enum RelocationSize {
     QWord = 8,
 }
 
-impl Relocation for RelocationSize {
-    type Encoding = u8;
-    fn from_encoding(encoding: Self::Encoding) -> Self {
-        match encoding {
-            1 => RelocationSize::Byte,
-            2 => RelocationSize::Word,
-            4 => RelocationSize::DWord,
-            8 => RelocationSize::QWord,
-            x => panic!("Unsupported relocation size {}", x)
-        }
-    }
-    fn from_size(size: RelocationSize) -> Self {
-        size
-    }
-    fn size(&self) -> usize {
+impl RelocationSize {
+    /// The size of this size-based relocation in bytes
+    pub fn size(&self) -> usize {
         *self as usize
     }
-    fn write_value(&self, buf: &mut [u8], value: isize) -> Result<(), ImpossibleRelocation> {
+
+    /// Pack `value` into this relocation size and format it into `buf`
+    pub fn write_value(&self, buf: &mut [u8], value: isize) -> Result<(), ImpossibleRelocation> {
         match self {
             RelocationSize::Byte => buf[0] =
                 i8::try_from(value).map_err(|_| ImpossibleRelocation { } )?
@@ -111,7 +148,9 @@ impl Relocation for RelocationSize {
         }
         Ok(())
     }
-    fn read_value(&self, buf: &[u8]) -> isize {
+
+    /// Extract a value of this size from `buf`
+    pub fn read_value(&self, buf: &[u8]) -> isize {
         match self {
             RelocationSize::Byte => buf[0] as i8 as isize,
             RelocationSize::Word => LittleEndian::read_i16(buf) as isize,
@@ -119,9 +158,56 @@ impl Relocation for RelocationSize {
             RelocationSize::QWord => LittleEndian::read_i64(buf) as isize,
         }
     }
-    fn kind(&self) -> RelocationKind {
-        RelocationKind::Relative
+}
+
+#[derive(Copy, Clone, Debug)]
+enum NoComplexRelocationEncodings {}
+
+impl ArchitectureRelocationEncoding for NoComplexRelocationEncodings {
+    fn decode(code: u8) -> Self {
+        panic!("Invalid complex relocation code {code} given for the current architecture");
     }
+}
+
+/// A simple relocation type for relocations that do not need complex bitpacking.
+#[derive(Debug, Clone, Copy)]
+pub struct SimpleRelocation(RelocationType<NoComplexRelocationEncodings>);
+
+/// A relocation that has no architecture-specific encoding/decoding logic
+impl Relocation for SimpleRelocation {
+    fn from_encoding(encoding: u8) -> Self {
+        SimpleRelocation(RelocationType::decode(encoding))
+    }
+
+    fn from_size(kind: RelocationKind, size: RelocationSize) -> Self {
+        SimpleRelocation(RelocationType::from_size(kind, size))
+    }
+
+    fn size(&self) -> usize {
+        match self.0.encoding {
+            RelocationEncoding::Simple(s) => s.size(),
+            _ => unreachable!()
+        }
+    }
+
+    fn write_value(&self, buf: &mut [u8], value: isize) -> Result<(), ImpossibleRelocation> {
+        match self.0.encoding {
+            RelocationEncoding::Simple(s) => s.write_value(buf, value),
+            _ => unreachable!()
+        }
+    }
+
+    fn read_value(&self, buf: &[u8]) -> isize {
+        match self.0.encoding {
+            RelocationEncoding::Simple(s) => s.read_value(buf),
+            _ => unreachable!()
+        }
+    }
+
+    fn kind(&self) -> RelocationKind {
+        self.0.kind
+    }
+
     fn page_size() -> usize {
         4096
     }

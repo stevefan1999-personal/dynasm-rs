@@ -8,7 +8,7 @@ use proc_macro2::{TokenStream, Span, Literal};
 use proc_macro_error2::emit_error;
 
 use crate::parse_helpers::{as_signed_number, as_ident, as_float};
-use crate::common::{Stmt, Size, delimited, bitmask, bitmask64};
+use crate::common::{Stmt, Size, delimited, bitmask, bitmask64, RelocationEncoding};
 
 /// Compile a single instruction. Input is taken from `data`, containing both the arguments
 /// and the encoding template and commands.
@@ -595,11 +595,7 @@ pub(super) fn compile_instruction(ctx: &mut Context, data: MatchData) -> Result<
                                 Command::BitRange(25+32, 7, 5),
                                 Command::Next
                             ];
-                        },
-                        Relocation::LITERAL8
-                        | Relocation::LITERAL16
-                        | Relocation::LITERAL32
-                        | Relocation::LITERAL64 => panic!("Literal relocation in instruction"),
+                        }
                     }
 
                     let span = value.span();
@@ -811,7 +807,7 @@ pub(super) fn compile_instruction(ctx: &mut Context, data: MatchData) -> Result<
             FlatArg::JumpTarget { ref jump } => match *command {
                 Command::Offset( relocation ) => {
                     // encode the complete relocation. Always starts at the begin of the instruction(s), and also relative to that
-                    let stmt = jump.clone().encode(relocation.size(), relocation.size(), &[relocation.to_id()]);
+                    let stmt = jump.clone().encode(relocation.size(), relocation.size(), true, RelocationEncoding::Custom(relocation.to_id()));
 
                     relocations.push(stmt);
                 },
