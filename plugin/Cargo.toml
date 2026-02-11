@@ -19,17 +19,17 @@ proc-macro = true
 
 [dependencies]
 lazy_static = "1.5.0"
-bitflags = "2.9.4"
+bitflags = "2.10.0"
 byteorder = "1.5.0"
-quote = "1.0.40"
+quote = "1.0.44"
 proc-macro-error2 = "2.0.1"
 
 [dependencies.syn]
-version = "2.0.106"
+version = "2.0.114"
 features = ["full", "extra-traits"]
 
 [dependencies.proc-macro2]
-version = "1.0.101"
+version = "1.0.106"
 
 [features]
 dynasm_opmap = []
