@@ -51,7 +51,7 @@ fn main() {
         ; lea rcx, [->hello]
         ; xor edx, edx
         ; mov dl, BYTE string.len() as _
-        ; mov rax, QWORD print as _
+        ; mov rax, QWORD print as *const () as _
         ; sub rsp, BYTE 0x28
         ; call rax
         ; add rsp, BYTE 0x28

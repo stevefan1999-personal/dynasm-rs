@@ -1,6 +1,6 @@
 extern crate dynasmrt;
 
-use dynasmrt::{dynasm, SimpleAssembler, DynasmApi};
+use dynasmrt::{SimpleAssembler, DynasmApi};
 
 // custom tests to validate aarch64 oversize immediate errors
 
@@ -53,7 +53,6 @@ fn test_ubits_fail_0() {
     let mut ops = SimpleAssembler::new();
     dynasm!(ops
         ; add x1, x2, x3, LSL hide(64)
-
     );
 }
 

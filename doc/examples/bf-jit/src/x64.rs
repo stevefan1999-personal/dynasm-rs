@@ -50,7 +50,7 @@ macro_rules! epilogue {
 macro_rules! call_extern {
     ($ops:ident, $addr:expr) => {my_dynasm!($ops
         ; mov [rsp + 0x38], rdx
-        ; mov rax, QWORD $addr as _
+        ; mov rax, QWORD $addr as *const () as _
         ; call rax
         ; mov rcx, [rsp + 0x30]
         ; mov rdx, [rsp + 0x38]

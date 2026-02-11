@@ -52,6 +52,7 @@ fn mov_64bit_disp() {
 }
 
 // 64-bit absolute displacements
+#[cfg(target_pointer_width="64")]
 #[test]
 fn mov_64bit_addr() {
     let mut ops = dynasmrt::VecAssembler::<X64Relocation>::new(0xAABB_CCDD_EEFF_0011);

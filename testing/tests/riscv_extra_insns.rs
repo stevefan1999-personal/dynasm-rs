@@ -191,6 +191,7 @@ fn ssamoswap_w_1285() {
 }
 
 // pc relative address building
+#[cfg(target_pointer_width="64")]
 #[test]
 fn pc_rel_address_building_64() {
     let mut ops = dynasmrt::VecAssembler::<dynasmrt::riscv::RiscvRelocation>::new(0x4000_0000_0000_0000);
@@ -243,6 +244,7 @@ fn pc_rel_address_building_32() {
 }
 
 // 32-bit call/jump/tail
+#[cfg(target_pointer_width="64")]
 #[test]
 fn pc_rel_big_jumps_64() {
     let mut ops = dynasmrt::VecAssembler::<dynasmrt::riscv::RiscvRelocation>::new(0x4000_0000_0000_0000);
@@ -316,6 +318,7 @@ fn pc_rel_big_jumps_32() {
 }
 
 // pc relative loads
+#[cfg(target_pointer_width="64")]
 #[test]
 fn pc_rel_load_64() {
     let mut ops = dynasmrt::VecAssembler::<dynasmrt::riscv::RiscvRelocation>::new(0x4000_0000_0000_0000);
@@ -361,6 +364,7 @@ fn pc_rel_load_64() {
     assert_eq!(hex, "AABBCCDDEEFF0011223344556677889997000000838000FF17010000034181FE97010000839101FE17020000035282FD9702000083A202FD17030000036383FC9703000083B303FC17060000071486FB9706000087A406FB17070000073587FA9707000087C507FA17080000830088F9034188F9831188F9035288F9832288F9036388F9833388F9071488F9872488F9073588F9874588F9", "pc-relative loads");
 }
 
+#[cfg(target_pointer_width="64")]
 #[test]
 fn pc_rel_load_32() {
     let mut ops = dynasmrt::VecAssembler::<dynasmrt::riscv::RiscvRelocation>::new(0x4000_0000_0000_0000);
@@ -403,6 +407,7 @@ fn pc_rel_load_32() {
 }
 
 // pc relative stores
+#[cfg(target_pointer_width="64")]
 #[test]
 fn pc_rel_store_64() {
     let mut ops = dynasmrt::VecAssembler::<dynasmrt::riscv::RiscvRelocation>::new(0x4000_0000_0000_0000);
@@ -442,6 +447,7 @@ fn pc_rel_store_64() {
     assert_eq!(hex, "AABBCCDDEEFF0011223344556677889997000000238810FE17010000231421FE9701000023A031FE17020000233C42FC97020000879202FD17030000272463FC9703000027B073FC17040000274C84FA17080000230818FA231838FA232858FA233868FA271888FA272898FA2738A8FA2748B8FA", "pc-relative stores");
 }
 
+#[cfg(target_pointer_width="64")]
 #[test]
 fn pc_rel_store_32() {
     let mut ops = dynasmrt::VecAssembler::<dynasmrt::riscv::RiscvRelocation>::new(0x4000_0000_0000_0000);
