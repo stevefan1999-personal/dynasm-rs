@@ -26,7 +26,7 @@ fn main() {
         ; lea rcx, [->hello]
         ; xor edx, edx
         ; mov dl, BYTE string.len() as _
-        ; mov rax, QWORD print as _
+        ; mov rax, QWORD print *const () as _
         ; sub rsp, BYTE 0x28
         ; call rax
         ; add rsp, BYTE 0x28
@@ -83,7 +83,7 @@ dynasm!(ops
     ; lea rcx, [->hello]
     ; xor edx, edx
     ; mov dl, BYTE string.len() as _
-    ; mov rax, QWORD print as _
+    ; mov rax, QWORD print *const () as _
     ; sub rsp, BYTE 0x28
     ; call rax
     ; add rsp, BYTE 0x28
@@ -373,7 +373,7 @@ We can now define several utility macros to handle common operations in the code
 + macro_rules! call_extern {
 +     ($ops:ident, $addr:expr) => {my_dynasm!($ops
 +         ; mov [rsp + 0x38], rdx
-+         ; mov rax, QWORD $addr as _
++         ; mov rax, QWORD $addr *const () as _
 +         ; call rax
 +         ; mov rcx, [rsp + 0x30]
 +         ; mov rdx, [rsp + 0x38]
@@ -791,7 +791,7 @@ macro_rules! epilogue {
 macro_rules! call_extern {
     ($ops:ident, $addr:expr) => {my_dynasm!($ops
         ; mov [rsp + 0x38], rdx
-        ; mov rax, QWORD $addr as _
+        ; mov rax, QWORD $addr *const () as _
         ; call rax
         ; mov rcx, [rsp + 0x30]
         ; mov rdx, [rsp + 0x38]

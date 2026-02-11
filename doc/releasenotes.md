@@ -2,7 +2,36 @@
 
 The `dynasm-rs` project consists out of two crates: The procedural macro crate `dynasm` and the runtime support crate `dynasmrt`. The versions of these two crates are synchronized and should always match. From version 0.7.0 onwards `dynasmrt` depends on `dynasm` itself to simplify this relationship. Any version listings below therefore refers to both the `dynasm` and `dynasmrt` crate version.
 
+Version 5.0.0
+=============
+
+Summary
+-------
+This release reworks the internals of relocation handling, allowing for more freedom in how references can be encoded.
+
+Plugin
+------
+- Added new .abs[32/64] and .rel[8/16/32/64] directives that allow the address or offset of labels to be directly encoded in the instruction stream.
+- - Part of this functionality was previously available using data directives, which has been removed.
+- Allowed `extern` labels to be used in all architectures.
+- Simplified emitted code using the new unified relocation encoding.
+
+Runtime
+-------
+- Rewrote a significant part of runtime relocation handling. The underlying API has changed, although simple users of the `dynasm!` macro should not be affected.
+- `LitPool` was reworked to support the features of the new relocation system.
+
+Architecture specific
+---------------------
+- `x64`: 64-bit immediate move instruction gained a format for encoding relocations, to support the x64 large code model.
+- `x86`: Fixed some issues with complex relocation encodings.
+
+Bugfixes
+--------
+- Fixed an issue where the x64 backend would overestimate the required space for the encoding of large negative immediates.
+
 Version 4.0.2
+=============
 
 Bugfix
 ------
@@ -14,7 +43,6 @@ Version 4.0.1
 Bugfix
 ------
 This bugfix release fixes a failure to compile the `dynasmrt` crate on non-unix RISC-V.
-
 
 Version 4.0.0
 =============

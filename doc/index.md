@@ -18,7 +18,8 @@ Dynasm-rs is inspired by the LuaJIT DynASM project for C and C++.
 # Documentation
 
 The documentation of dynasm-rs is split up into several parts. To get started, you're advised
-to read through the [tutorial](./tutorial.html). After this, you can read through the
+to read through the [tutorial](./tutorial.html) and the
+[basics of runtime assembling](./dynamic_assembly.html). After this, you can read through the
 [language reference](./langref_common.html) to learn about the syntax used by dynasm-rs. You can
 also read through the [runtime documentation](../runtime/dynasmrt/index.html) to learn about the
 runtime API. The instruction references lists all assembly mnemnonics

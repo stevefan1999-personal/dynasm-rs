@@ -65,9 +65,23 @@ Name      | Argument format | Description
 `.i64`  | One or more expressions of the type `i64` | Pushes the values into the assembling buffer.
 `.f32`  | One or more expressions of the type `f32` | Pushes the values into the assembling buffer.
 `.f64`  | One or more expressions of the type `f64` | Pushes the values into the assembling buffer.
+`.rel8` | One label | Pushes the offset of the specified label target to this directive into the assembling buffer, encoded as an `i8`.
+`.rel16` | One label | Pushes the offset of the specified label target to this directive into the assembling buffer, encoded as an `i16`.
+`.rel32` | One label | Pushes the offset of the specified label target to this directive into the assembling buffer, encoded as an `i32`.
+`.rel64` | One label | Pushes the offset of the specified label target to this directive into the assembling buffer, encoded as an `i64`.
+`.abs32` | One label | Pushes the absolute address of this label into the assembling buffer, encoded as an `i32`.
+`.abs64` | One label | Pushes the absolute address of this label into the assembling buffer, encoded as an `i64`.
 `.bytes`  | An expression of that implements `IntoIterator<Item=u8>` or `IntoIterator<Item=&u8>` | Extends the assembling buffer with the iterator.
 
 Directives are normally local to the current `dynasm!` invocation. However, if the `filelocal` feature is used they will be processed in lexical order over the whole file. This feature only works on a nightly compiler and might be removed in the future.
+
+### A note on label directives
+
+Label directives allow labels to be encoded directly in the instruction stream. They are resolved similarly to labels as instruction arguments, but can allow larger absolute addresses and relative offsets to be specified than an instruction set supports in its instructions. As long as dynasm-rs controls the relevant buffers, their offsets will be updated as the buffer grows and moves around in memory. Both relative and absolute offsets are provided to allow for the creation of position-independent code on architectures that support this.
+
+When using label sizes that do not match the bitwidth of `usize`, dynasm-rs assumes sign-extension of the value. For instance, the `.abs32` directive allows addresses from `0` to `0x0000_0000_7FFF_FFFF` and `0xFFFF_FFFF_8000_0000` to `0xFFFF_FFFF_FFFF_FFFF` to be encoded on 64-bit systems. Similarly, the `.abs64` directive will sign extend the encoded values on 32-bit systems.
+
+Label offset calculation uses wrapping arithmetic, so a relative label the same size as `usize` can access the entire memory space.
 
 ## Aliases
 
@@ -90,7 +104,7 @@ macro_rules! fma {
 
 ## Statements
 
-To make code that uses a lot of macros less verbose, dynasm-rs allows bare Rust statements to be inserted inside `dynasm!` invocations. This can be done by using a double semicolon instead of a single semicolon at the start of the line as displayed in the following equivalent examples:
+To make code that uses many macros less verbose, dynasm-rs allows bare Rust statements to be inserted inside `dynasm!` invocations. This can be done by using a double semicolon instead of a single semicolon at the start of the line as displayed in the following equivalent examples:
 
 ```
 dynasm!(ops
@@ -110,7 +124,7 @@ dynasm!(ops
 
 ## Labels
 
-In order to describe flow control effectively, dynasm-rs supports labels. However, since the assembly templates can be combined in a variety of ways at the mercy of the program using dynasm-rs, the semantics of these labels are somewhat different from how labels work in a static assembler.
+To describe flow control effectively, dynasm-rs supports labels. Since the assembly templates can be combined in a variety of ways at the mercy of the program using dynasm-rs, the semantics of these labels are somewhat different from how labels work in a static assembler.
 
 Dynasm-rs distinguishes between four different types of labels: global, local, dynamic and extern. Their syntax is as follows:
 
@@ -121,7 +135,7 @@ Type    |  Kind   | Definition   | Reference
 Local   | static  | `label:`     | `>label` or `<label`
 GLobal  | static  | `->label:`   | `->label`
 Dynamic | dynamic | `=>expr`     | `=>expr`
-Extern  | extern  | `-`          | `extern expr`
+Extern  | extern  | none         | `extern expr`
 
 All labels have their addresses resolved at `Assembler::commit()` time.
 
@@ -141,4 +155,4 @@ Dynamic labels are similar to global labels in that they can be defined only onc
 
 ### Extern labels
 
-Extern labels allow emitted machine code to directly reference fixed addresses as branch targets. This is only supported on architectures featuring absolute branch targets, like `x86`.
+Extern labels allow emitted machine code to directly reference fixed addresses as branch targets.
