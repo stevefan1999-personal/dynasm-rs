@@ -1037,3 +1037,18 @@ fn test_split_float_32_fail_3() {
     );
 }
 
+// the used reference assembler didn't generate a good example for adrp, so we check the format here.
+#[test]
+fn test_adrp() {
+    let mut ops = SimpleAssembler::new();
+    dynasm!(ops
+        ; adrp x3, 0x5AC3_9000
+        ; adrp x5, 0xFFFF_F000
+        ; adrp x7, -0x1_0000_0000
+    );
+
+    let buf = ops.finalize();
+    let hex: Vec<String> = buf.iter().map(|x| format!("{:02X}", *x)).collect();
+    let hex = hex.join(" ");
+    assert_eq!(hex, "C3 61 2D B0 E5 FF 7F F0 07 00 80 90", "bad adrp encoding");
+}

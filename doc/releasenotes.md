@@ -24,11 +24,12 @@ Runtime
 Architecture specific
 ---------------------
 - `x64`: 64-bit immediate move instruction gained a format for encoding relocations, to support the x64 large code model.
-- `x86`: Fixed some issues with complex relocation encodings.
 
 Bugfixes
 --------
 - Fixed an issue where the x64 backend would overestimate the required space for the encoding of large negative immediates.
+- Fixed an issue where the `aarch64` instruction `adrp` would be encoded wrongly when given an immediate as argument.
+- Fixed an issue with negative `eip`-relative offsets in `x86` mode.
 
 Version 4.0.2
 =============
